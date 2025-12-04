@@ -75,9 +75,9 @@ void setup()
        }
      });
   
-  // Initialize ArtNet client
+  // Initialize ArtNet client with specific network interface
   artnet = new ArtNetClient();
-  artnet.start();
+  artnet.start("169.254.166.10");  // Bind to our local IP on en4
   
   // Initialize DMX data array to zero
   for (int i = 0; i < dmxData.length; i++)
@@ -86,6 +86,7 @@ void setup()
   }
   
   println("ArtNet DMX Test Started");
+  println("Local IP: 169.254.166.10");
   println("Target IP: " + artnetNodeIP);
   println("Universe: " + universe);
   println("Channels will fade up and down continuously");
