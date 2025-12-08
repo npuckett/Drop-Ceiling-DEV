@@ -28,19 +28,19 @@ float channel3Value = 0;
 
 void setup()
 {
-  size(400, 400);
+  size(1800, 900);
   
   // Initialize ControlP5
   cp5 = new ControlP5(this);
   
   // Create slider for Channel 1
   cp5.addSlider("ch1")
-     .setPosition(20, 50)
-     .setSize(350, 30)
+     .setPosition(550, 100)
+     .setSize(1200, 80)
      .setRange(0, 145)
      .setValue(0)
-     .setLabel("Channel 1")
-     .setColorCaptionLabel(color(255))
+     .setLabel("")
+     .setCaptionLabel("")
      .onChange(new CallbackListener() {
        public void controlEvent(CallbackEvent event) {
          channel1Value = event.getController().getValue();
@@ -49,12 +49,12 @@ void setup()
   
   // Create slider for Channel 2
   cp5.addSlider("ch2")
-     .setPosition(20, 100)
-     .setSize(350, 30)
+     .setPosition(550, 350)
+     .setSize(1200, 80)
      .setRange(0, 145)
      .setValue(0)
-     .setLabel("Channel 2")
-     .setColorCaptionLabel(color(255))
+     .setLabel("")
+     .setCaptionLabel("")
      .onChange(new CallbackListener() {
        public void controlEvent(CallbackEvent event) {
          channel2Value = event.getController().getValue();
@@ -63,12 +63,12 @@ void setup()
   
   // Create slider for Channel 3
   cp5.addSlider("ch3")
-     .setPosition(20, 150)
-     .setSize(350, 30)
+     .setPosition(550, 600)
+     .setSize(1200, 80)
      .setRange(0, 145)
      .setValue(0)
-     .setLabel("Channel 3")
-     .setColorCaptionLabel(color(255))
+     .setLabel("")
+     .setCaptionLabel("")
      .onChange(new CallbackListener() {
        public void controlEvent(CallbackEvent event) {
          channel3Value = event.getController().getValue();
@@ -106,18 +106,38 @@ void draw()
   // Send DMX data via ArtNet
   artnet.unicastDmx(artnetNodeIP, subnet, universe, dmxData);
   
-  // Display current values on screen
+  // Display title
   fill(255);
   textAlign(LEFT);
-  textSize(14);
+  textSize(24);
+  text("ArtNet DMX Manual Control", 20, 40);
   
-  text("ArtNet DMX Manual Control", 20, 30);
-  text("Target: " + artnetNodeIP, 20, 220);
-  text("Universe: " + universe, 20, 240);
+  // Display large channel values to the left of each slider
+  textSize(288);
+  textAlign(RIGHT);
+  fill(255);  // White for Channel 1
+  text(int(channel1Value), 520, 200);
   
-  text("Channel 1 (R): " + int(channel1Value) + " (DMX[0]=" + (int(dmxData[0]) & 0xFF) + ")", 20, 270);
-  text("Channel 2 (G): " + int(channel2Value) + " (DMX[1]=" + (int(dmxData[1]) & 0xFF) + ")", 20, 290);
-  text("Channel 3 (B): " + int(channel3Value) + " (DMX[2]=" + (int(dmxData[2]) & 0xFF) + ")", 20, 310);
+  fill(255);  // White for Channel 2
+  text(int(channel2Value), 520, 450);
+  
+  fill(255);  // White for Channel 3
+  text(int(channel3Value), 520, 700);
+  
+  // Display channel labels
+  textSize(24);
+  textAlign(RIGHT);
+  fill(180);
+  text("Ch 1", 520, 230);
+  text("Ch 2", 520, 480);
+  text("Ch 3", 520, 730);
+  
+  // Display network info at bottom
+  textAlign(LEFT);
+  textSize(18);
+  fill(180);
+  text("Target: " + artnetNodeIP + "  |  Universe: " + universe, 30, 850);
+  text("Local: 169.254.166.10", 30, 875);
 }
 
 void exit()
