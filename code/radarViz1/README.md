@@ -29,26 +29,180 @@ radarViz1/
 
 ---
 
+## RD-03D Data Format (Multi-Target Mode)
+
+The RD-03D radar uses a proprietary binary protocol over UART at **256000 baud** (8N1). This section documents the frame format for multi-target detection mode, which is not well documented in the official datasheet.
+
+### Enabling Multi-Target Mode
+
+The radar defaults to single-target mode. To enable tracking of up to 3 targets, send this 12-byte command:
+
+```
+FD FC FB FA 02 00 90 00 04 03 02 01
+└─────────┘ └───┘ └───┘ └─────────┘
+  Preamble   Len   Cmd    Postamble
+```
+
+| Bytes | Value | Description |
+|-------|-------|-------------|
+| 0-3   | `FD FC FB FA` | Command preamble (start marker) |
+| 4-5   | `02 00` | Payload length (2 bytes, little-endian) |
+| 6-7   | `90 00` | Command: Enable multi-target mode |
+| 8-11  | `04 03 02 01` | Command postamble (end marker) |
+
+### Frame Structure
+
+After enabling multi-target mode, the radar continuously outputs 30-byte frames:
+
+```
+┌─────────────────────────────────────────────────────────────────────────────────────┐
+│ Byte:  0   1   2   3 │ 4-11      │ 12-19     │ 20-27     │ 28  29                   │
+│        ─────────────────────────────────────────────────────────────                │
+│        Header        │ Target 1  │ Target 2  │ Target 3  │ Tail                     │
+│        AA FF 03 00   │ (8 bytes) │ (8 bytes) │ (8 bytes) │ 55 CC                    │
+└─────────────────────────────────────────────────────────────────────────────────────┘
+```
+
+| Field | Bytes | Value | Description |
+|-------|-------|-------|-------------|
+| Header | 0-3 | `AA FF 03 00` | Frame start marker. `03` indicates 3 targets. |
+| Target 1 | 4-11 | (see below) | First tracked target data |
+| Target 2 | 12-19 | (see below) | Second tracked target data |
+| Target 3 | 20-27 | (see below) | Third tracked target data |
+| Tail | 28-29 | `55 CC` | Frame end marker |
+
+### Target Data Block (8 bytes each)
+
+Each target occupies 8 bytes with 4 fields, all in **little-endian** format:
+
+```
+┌───────────────────────────────────────────────────────────────┐
+│ Offset: 0    1  │ 2    3  │ 4    5  │ 6    7                  │
+│         ─────────────────────────────────────                 │
+│         X coord  │ Y coord │ Speed   │ Distance               │
+│         (2 bytes)│(2 bytes)│(2 bytes)│(2 bytes)               │
+└───────────────────────────────────────────────────────────────┘
+```
+
+### Field Encoding Details
+
+#### X Coordinate (bytes 0-1)
+- **Unit**: Millimeters from sensor centerline
+- **Range**: Approximately ±8000mm (±8 meters)
+- **Encoding**: Sign-magnitude with inverted sign bit
+
+```
+Bit:  15  14  13  12  11  10  9   8   7   6   5   4   3   2   1   0
+      ├───┼───────────────────────────────────────────────────────┤
+      Sign                    Magnitude (0-32767)
+      
+      Bit 15 = 1  →  Positive (target is to the RIGHT of sensor)
+      Bit 15 = 0  →  Negative (target is to the LEFT of sensor)
+```
+
+**Decoding:**
+```cpp
+uint16_t raw = byte[0] | (byte[1] << 8);  // Little-endian
+int16_t x = (raw & 0x7FFF);               // Get magnitude
+if (!(raw & 0x8000)) x = -x;              // Bit 15 clear = negative
+```
+
+**Example:**
+| Raw bytes | Raw value | Bit 15 | Result |
+|-----------|-----------|--------|--------|
+| `E8 83` | 0x83E8 | 1 (set) | +1000 mm (1m right) |
+| `E8 03` | 0x03E8 | 0 (clear) | -1000 mm (1m left) |
+| `00 00` | 0x0000 | 0 | 0 (no target) |
+
+#### Y Coordinate (bytes 2-3)
+- **Unit**: Millimeters from sensor (forward distance)
+- **Range**: 0 to ~8000mm (0-8 meters)
+- **Encoding**: Unsigned with 0x8000 offset
+
+```
+Actual Y = Raw Value - 0x8000
+```
+
+**Decoding:**
+```cpp
+uint16_t raw = byte[2] | (byte[3] << 8);
+int16_t y = (int16_t)(raw - 0x8000);
+```
+
+**Example:**
+| Raw bytes | Raw value | Calculation | Result |
+|-----------|-----------|-------------|--------|
+| `00 80` | 0x8000 | 0x8000 - 0x8000 | 0 mm |
+| `E8 83` | 0x83E8 | 0x83E8 - 0x8000 | +1000 mm |
+| `D0 87` | 0x87D0 | 0x87D0 - 0x8000 | +2000 mm |
+
+#### Speed (bytes 4-5)
+- **Unit**: Centimeters per second
+- **Range**: Approximately ±100+ cm/s
+- **Encoding**: Same sign-magnitude as X coordinate
+
+```
+Bit 15 = 1  →  Positive speed (target moving AWAY from sensor)
+Bit 15 = 0  →  Negative speed (target moving TOWARD sensor)
+```
+
+**Decoding:**
+```cpp
+uint16_t raw = byte[4] | (byte[5] << 8);
+int16_t speed = (raw & 0x7FFF);
+if (!(raw & 0x8000)) speed = -speed;
+```
+
+#### Distance Resolution (bytes 6-7)
+- **Unit**: Internal resolution value
+- **Note**: Not typically used; distance is calculated from X,Y
+
+```cpp
+float distance_cm = sqrtf(x*x + y*y) / 10.0f;  // X,Y are in mm
+float angle_deg = atan2f(x, y) * 180.0f / PI;  // Angle from forward
+```
+
+### Invalid/Empty Targets
+
+When fewer than 3 targets are detected, unused target slots contain all zeros:
+
+```
+00 00 00 00 00 00 00 00  = No target in this slot
+```
+
+Check for validity:
+```cpp
+bool valid = (raw_x != 0 || raw_y != 0);
+```
+
+### Complete Frame Example
+
+Raw frame (30 bytes):
+```
+AA FF 03 00  E8 83 D0 87 0A 80 00 00  00 00 00 00 00 00 00 00  00 00 00 00 00 00 00 00  55 CC
+└─ Header ─┘ └──── Target 1 ────────┘ └──── Target 2 ────────┘ └──── Target 3 ────────┘ └Tail┘
+```
+
+Decoded:
+| Field | Raw | Decoded |
+|-------|-----|---------|
+| Target 1 X | `E8 83` | +1000 mm (1m right) |
+| Target 1 Y | `D0 87` | +2000 mm (2m forward) |
+| Target 1 Speed | `0A 80` | +10 cm/s (moving away) |
+| Target 1 Dist | (calculated) | 223.6 cm |
+| Target 1 Angle | (calculated) | 26.6° |
+| Targets 2-3 | `00...` | Not detected |
+
+### Frame Timing
+
+- **Baud rate**: 256000 (high speed!)
+- **Frame interval**: ~20-50ms depending on radar configuration
+- **Byte time**: ~39μs per byte
+- **Frame time**: ~1.2ms for 30 bytes
+
+---
+
 ## Arduino: How It Works
-
-### Frame Format (RD-03D Protocol)
-
-The radar outputs 30-byte frames at 256000 baud:
-
-```
-┌──────────────────────────────────────────────────────────────────────────┐
-│ Header (4)  │ Target 1 (8) │ Target 2 (8) │ Target 3 (8) │ Tail (2)      │
-│ AA FF 03 00 │ X Y Spd Dist │ X Y Spd Dist │ X Y Spd Dist │ 55 CC         │
-└──────────────────────────────────────────────────────────────────────────┘
-```
-
-Each target block contains:
-| Bytes | Field    | Format                                              |
-|-------|----------|-----------------------------------------------------|
-| 0-1   | X        | Little-endian, bit 15: 1=positive, 0=negative (mm)  |
-| 2-3   | Y        | Little-endian, offset by 0x8000 (mm)                |
-| 4-5   | Speed    | Little-endian, bit 15: 1=away, 0=approaching (cm/s) |
-| 6-7   | Distance | Distance resolution value                           |
 
 ### State Machine Parser
 
